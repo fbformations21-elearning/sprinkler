@@ -161,6 +161,13 @@
     #infobulle .ib-title{font-size:38px}
     #infobulle .ib-t{min-width:120px}
   }
+  /* --- étiquettes de l'armoire de commande (toujours visibles) --- */
+  .ctrllab{position:absolute;transform:translate(-50%,-50%);pointer-events:none;text-align:center;
+    font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:#eaf2ff;white-space:nowrap;transition:opacity .15s}
+  .ctrllab b{display:block;font-weight:600;letter-spacing:.04em;margin-bottom:2px}
+  .ctrllab .st{display:inline-block;padding:1px 7px;border-radius:6px;font-size:9px;font-weight:600;letter-spacing:.04em}
+  .ctrllab .st.on{background:#123a26;color:#3fd98a;border:1px solid #1e5a3a}
+  .ctrllab .st.off{background:#3a1414;color:#ff8f88;border:1px solid #5a2020}
   @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -259,7 +266,6 @@
       </div>
       </div>
       <button id="btnTrigger" class="head-trigger">Déclencher une tête</button>
-      <button id="btnMotoStop" class="warn" style="display:none;margin-top:8px;width:100%">Arrêter la motopompe</button>
     </div>
   </div>
   <div class="grp">
@@ -284,6 +290,7 @@
     <div class="actions">
       <button id="btnCharge" class="primary">Mettre en eau</button>
       <button id="btnPurge" class="warn">Purger / vidanger</button>
+      <button id="btnFillB" class="primary" style="grid-column:1 / -1">Remplir la cuve (Source B) · touche B</button>
     </div>
   </div>
 </div>
@@ -385,6 +392,7 @@ eqCuve.userData.infoKey='cuve'; eqMoto.userData.infoKey='moto'; eqJockey.userDat
 eqPoste.userData.infoKey='poste';
 eqLocalBase.userData.infoKey='local'; eqLocalShell.userData.infoKey='local';
 eqHangarFrame.userData.infoKey='hangar'; eqHangarShell.userData.infoKey='hangar';
+const posteHiders=[]; let posteFadeMat=null;   // poteaux devant le poste, estompés au zoom/à l'approche
 let valveWheel, motoFan, jockeyMotor, gong;
 const qturnValves=[]; let bellRinging=false, bellWasRinging=false; let streamEssai, streamVidange;
 const flowBypass=[]; let bypassAmont=null, bypassAval=null; const wheelValves=[];   // by-pass de remplissage autour du clapet
@@ -704,6 +712,73 @@ const LOC={x0:-5.9,x1:-0.7,z0:-3.6,z1:3.8,h:3.5};
   const exh=new T.Mesh(new T.CylinderGeometry(.09,.09,1.6,10),steelD); exh.position.set(MOTO.x+1.2,3.2,MOTO.z-0.2); eqLocalShell.add(exh);
   const cap=new T.Mesh(new T.ConeGeometry(.16,.2,12),steelD); cap.position.set(MOTO.x+1.2,4.05,MOTO.z-0.2); eqLocalShell.add(cap);
 })();
+/* --- ARMOIRE DE COMMANDE (dans le local, contre le mur ouest, à côté de l'arrivée d'eau) --- */
+const armoireBtns=[]; let jockeyBtnCap=null, motoBtnCap=null; const ctrlLabels=[];
+(function armoire(){
+  const g=new T.Group(); scene.add(g); g.userData.infoKey='local';
+  const X=-5.62, Z=-0.35;                                  // contre la face intérieure du mur ouest, juste au sud de l'aspiration (z=-1.6)
+  const doorMat=new T.MeshStandardMaterial({color:'#2e3b4d',metalness:.4,roughness:.55});
+  mesh(new T.BoxGeometry(0.36,1.7,1.2), cabinet, X, 1.02, Z, g);                        // corps
+  mesh(new T.BoxGeometry(0.06,1.5,1.0), doorMat, X+0.19, 1.02, Z, g);                   // porte (face est, vers l'intérieur)
+  mesh(new T.BoxGeometry(0.05,0.16,1.0), new T.MeshStandardMaterial({color:'#16202e'}), X+0.19, 1.72, Z, g); // bandeau haut
+  mesh(new T.BoxGeometry(0.05,0.06,0.2), steelD, X+0.22, 1.02, Z+0.42, g);              // poignée
+  for(let i=0;i<4;i++) mesh(new T.BoxGeometry(0.045,0.02,0.5), steelD, X+0.2, 0.42+i*0.055, Z, g); // ouïes de ventilation
+  mesh(new T.BoxGeometry(0.42,0.14,1.32), steelD, X, 0.07, Z, g);                        // socle
+  const faceX=X+0.20;
+  function pushButton(zz, kind){
+    const base=mesh(new T.CylinderGeometry(0.11,0.11,0.05,20), steelD, faceX, 1.18, zz, g); base.rotation.z=Math.PI/2;
+    const cap =mesh(new T.CylinderGeometry(0.085,0.085,0.07,20),
+      new T.MeshStandardMaterial({color:'#8a1f1a',emissive:'#3a0a08',emissiveIntensity:.5,metalness:.3,roughness:.5}),
+      faceX+0.05, 1.18, zz, g); cap.rotation.z=Math.PI/2;
+    cap.userData.ctrl=kind; base.userData.ctrl=kind;
+    armoireBtns.push(cap, base);
+    return cap;
+  }
+  jockeyBtnCap=pushButton(Z-0.30,'jockey');               // bouton : pompe jockey
+  motoBtnCap  =pushButton(Z+0.30,'moto');                 // bouton : motopompe (l'un à côté de l'autre)
+  // étiquettes (toujours visibles)
+  const layer=document.getElementById('labels');
+  function ctrlLabel(name, zz, getter){
+    const el=document.createElement('div'); el.className='ctrllab';
+    el.innerHTML='<b>'+name+'</b><span class="st off">ARRÊT</span>';
+    layer.appendChild(el);
+    ctrlLabels.push({el, st:el.querySelector('.st'), p:V(faceX+0.06,0.84,zz), getter});
+  }
+  ctrlLabel('JOCKEY',    Z-0.30, ()=>sys.jockey);
+  ctrlLabel('MOTOPOMPE', Z+0.30, ()=>sys.moto);
+})();
+/* --- FUMÉE D'ÉCHAPPEMENT (motopompe diesel en marche) --- */
+const smokePuffs=[]; const SMB={x:MOTO.x+1.2, y:4.25, z:MOTO.z-0.2};   // sommet du conduit d'échappement
+(function smoke(){
+  const c=document.createElement('canvas'); c.width=c.height=64;
+  const cx=c.getContext('2d'); const gr=cx.createRadialGradient(32,32,0,32,32,32);
+  gr.addColorStop(0,'rgba(210,214,220,0.95)'); gr.addColorStop(0.45,'rgba(150,156,164,0.55)'); gr.addColorStop(1,'rgba(120,126,134,0)');
+  cx.fillStyle=gr; cx.beginPath(); cx.arc(32,32,32,0,Math.PI*2); cx.fill();
+  const tex=new T.CanvasTexture(c);
+  const N=16;
+  for(let i=0;i<N;i++){
+    const mat=new T.SpriteMaterial({map:tex, color:0x6b7178, transparent:true, opacity:0, depthWrite:false, fog:true});
+    const sp=new T.Sprite(mat); sp.scale.setScalar(0.4); sp.position.set(SMB.x,SMB.y,SMB.z); sp.visible=false; sp.renderOrder=6;
+    scene.add(sp);
+    smokePuffs.push({sp,mat, active:false, life:0, rel:i*0.13, dx:0, dz:0, spd:0.32+Math.random()*0.16, rot:(Math.random()-0.5)*0.6});
+  }
+})();
+function launchPuff(p){ p.active=true; p.life=0; p.dx=(Math.random()-0.5)*0.35; p.dz=(Math.random()-0.5)*0.35; p.rel=0.10+Math.random()*0.10; }
+function updateSmoke(dt){
+  for(const p of smokePuffs){
+    if(p.active){
+      p.life += dt*p.spd;
+      if(p.life>=1){ p.active=false; p.sp.visible=false; p.mat.opacity=0; }
+      else{ const l=p.life; p.sp.visible=true;
+        p.sp.position.set(SMB.x + p.dx*l*3.5, SMB.y + l*2.7, SMB.z + p.dz*l*3.5);   // monte et s'évase
+        p.sp.scale.setScalar(0.32 + l*1.35);
+        p.mat.rotation += dt*p.rot;
+        p.mat.opacity = 0.5*Math.sin(l*Math.PI); }                                  // apparition puis dissipation
+    } else if(sys.moto){                                                            // relance échelonnée tant que la pompe tourne
+      p.rel -= dt; if(p.rel<=0) launchPuff(p);
+    } else { p.sp.visible=false; p.mat.opacity=0; }
+  }
+}
 /* ============================================================
    CANALISATIONS (chemin de l'eau) + TÊTES
    ============================================================ */
@@ -894,9 +969,12 @@ const HG={x0:2.6,x1:11.4,z0:-4.2,z1:4.2,eave:6.4,ridge:8.4};
   const cladM =new T.MeshStandardMaterial({color:'#b9c0c8',metalness:.45,roughness:.55});
   const roofM =new T.MeshStandardMaterial({color:'#949ca6',metalness:.45,roughness:.55,side:T.DoubleSide});
   const beam=(w,h,d,x,y,z,m,g)=>{ const me=new T.Mesh(new T.BoxGeometry(w,h,d),m); me.position.set(x,y,z); g.add(me); return me; };
+  posteFadeMat=frameM.clone(); posteFadeMat.transparent=true;   // matériau dédié aux poteaux estompables
   // portiques : poteaux + arbalétriers
   framesX.forEach(fx=>{ for(const z of [-zc,zc]){
-    beam(0.2,HG.eave,0.2,fx,HG.eave/2,z,frameM,eqHangarFrame);
+    const nearPoste=(fx===2.6||fx===5.6);                        // poteaux qui encadrent le poste sprinkler (x≈3.2)
+    const col=beam(0.2,HG.eave,0.2,fx,HG.eave/2,z, nearPoste?posteFadeMat:frameM, eqHangarFrame);
+    if(nearPoste) posteHiders.push(col);
     const a=V(fx,HG.eave,z), b=V(fx,HG.ridge,0), dir=new T.Vector3().subVectors(b,a), len=dir.length();
     const r=new T.Mesh(new T.BoxGeometry(0.16,len,0.16),frameM);
     r.position.copy(a.clone().add(dir.clone().multiplyScalar(.5)));
@@ -1061,6 +1139,11 @@ function updateLabels(){
     M.el.style.opacity= vis?1:0; M.el.style.pointerEvents= vis?'':'none';
     if(vis){ M.el.style.left=((v.x*.5+.5)*w)+'px'; M.el.style.top=((-v.y*.5+.5)*h)+'px'; } }
   cart.style.opacity=(showPoste&&labelsOn)?1:0;
+  // étiquettes de l'armoire (toujours visibles, état marche/arrêt)
+  for(const C of ctrlLabels){ const v=C.p.clone().project(camera); const vis=v.z<1;
+    C.el.style.opacity=vis?1:0;
+    if(vis){ C.el.style.left=((v.x*.5+.5)*w)+'px'; C.el.style.top=((-v.y*.5+.5)*h)+'px';
+      const on=C.getter(); C.st.textContent=on?'MARCHE':'ARRÊT'; C.st.className='st '+(on?'on':'off'); } }
   positionInfo();
 }
 /* ============================================================
@@ -1069,7 +1152,17 @@ function updateLabels(){
 const PNOM=8.0;
 // classification des tronçons : amont (sous le clapet) / aval (système)
 for(const s of segments){ s.zone = ((s.dIn+s.dOut)/2 < dClapet) ? 'sup' : 'sys'; }
-const sys={ supFront:dValve10, sysFront:dClapet, valveOpen:false, essai:false, vidange:false, cloche:false, supplied:false, jockey:false, speed:16, essaiTimer:0, moto:false, motoArmHeads:false, bypassProg:0, purge:false, tankLevel:1 };
+const sys={ supFront:dValve10, sysFront:dClapet, valveOpen:false, essai:false, vidange:false, cloche:false, supplied:false, jockey:false, jockeyOn:false, speed:16, essaiTimer:0, moto:false, motoArmHeads:false, bypassProg:0, purge:false, tankLevel:1, fillB:false };
+function pressCtrl(kind){                            // boutons physiques de l'armoire de commande
+  if(kind==='jockey'){ sys.jockeyOn=!sys.jockeyOn; toast(sys.jockeyOn?'Pompe jockey — MARCHE':'Pompe jockey — ARRÊT'); }
+  else if(kind==='moto'){ btnMoto.click(); }         // btnMoto bascule déjà marche/arrêt de la motopompe
+  updateArmoireLamps();
+}
+function updateArmoireLamps(){                        // voyants : vert = marche, rouge = arrêt
+  const paint=(cap,on)=>{ if(!cap)return; const m=cap.material;
+    m.color.set(on?'#1f9a3f':'#8a1f1a'); m.emissive.set(on?'#0e6a28':'#3a0a08'); m.emissiveIntensity=on?1.0:0.5; };
+  paint(jockeyBtnCap, sys.jockeyOn); paint(motoBtnCap, sys.moto);
+}
 const SPAN=Math.max(1,MAXD-dClapet);   // longueur du réseau au-dessus du clapet
 const drainRate=SPAN/30;               // vidange / retour : ~30 s pour se vider
 const drainRateHead50=SPAN/50;         // tête déclenchée, poste fermé : les canalisations se vident en ~50 s
@@ -1148,9 +1241,12 @@ function updateWater(dt,t){
   if(!sys.moto && sys.sysFront <= dClapet+0.05){ for(const d of motoHeadDefs) d.open=false; }
   // --- NIVEAU DE LA CUVE : pleine au départ ; la Source B se déclenche seulement quand le niveau descend jusqu'à son cran (2e cran) et l'entretient ---
   const headsFlowing = sprayFlowing || motoHeadDefs.some(d=>d.flowing);
-  const tankDraw = headsFlowing ? 0.08 : 0;                        // consommation par les têtes ouvertes
+  const tankDraw = headsFlowing ? 0.08/5 : 0;                      // consommation par les têtes ouvertes (vidage cuve ralenti ×5)
   const srcBRate = 0.22;                                           // débit d'arrivée Source B (fort : maintient le niveau au 2e cran)
-  if(sys.tankLevel > tankLevelB){
+  if(sys.fillB){                                                    // remplissage manuel par la Source B (touche/bouton) -> recharge la cuve
+    sys.tankLevel += (srcBRate*1.3 - tankDraw)*dt;
+    if(sys.tankLevel >= 0.999){ sys.tankLevel = 1; sys.fillB = false; toast('Cuve remplie (Source B)'); }
+  } else if(sys.tankLevel > tankLevelB){
     sys.tankLevel = Math.max(tankLevelB, sys.tankLevel - tankDraw*dt);              // réserve (Source A) qui se vide ; Source B pas encore sollicitée
   } else {
     sys.tankLevel = Math.min(tankLevelB, sys.tankLevel + (srcBRate - tankDraw)*dt); // 2e cran atteint : Source B entretient le niveau (compense la conso)
@@ -1183,7 +1279,7 @@ function updateWater(dt,t){
   const filling=(Math.abs(supTarget-sys.supFront)>0.1)||(sys.valveOpen&&Math.abs(sysTarget-sys.sysFront)>0.1);
   if(filling){ motoFan.rotation.x+=dt*22; jockeyMotor.rotation.y+=dt*10; }
   if(sys.moto) motoFan.rotation.x+=dt*26;                              // motopompe en marche -> ventilateur/moteur diesel tourne en continu
-  sys.jockey=full&&sys.valveOpen;
+  sys.jockey=sys.jockeyOn;                         // pilotée par le bouton de l'armoire (marche/arrêt manuel)
   if(sys.jockey) jockeyMotor.rotation.y+=dt*3;
   setGauge(bar);
   let label='Vide';
@@ -1261,6 +1357,9 @@ cv.addEventListener('pointermove',e=>{ if(!drag||touchN>=2)return; const dx=e.cl
     target.addScaledVector(rt,-dx*radius*0.0016); target.addScaledVector(V(0,1,0),dy*radius*0.0016); } applyCam(); });
 cv.addEventListener('pointerup',e=>{ if(e.pointerType==='touch')touchN=Math.max(0,touchN-1); drag=null; if(downXY && Math.hypot(e.clientX-downXY[0],e.clientY-downXY[1])<5){
   mouse.x=(e.clientX/innerWidth)*2-1; mouse.y=-(e.clientY/innerHeight)*2+1; ray.setFromCamera(mouse,camera);
+  // 1) boutons de l'armoire de commande (marche/arrêt pompes)
+  const ab=ray.intersectObjects(armoireBtns,true)[0];
+  if(ab){ let o=ab.object; while(o){ if(o.userData.ctrl){ pressCtrl(o.userData.ctrl); return; } o=o.parent; } }
   const hits=ray.intersectObjects([...eqPoste.children,...eqMoto.children],true);
   let handled=false;
   for(const h of hits){ let o=h.object,done=false; while(o){ if(o.userData.isValve){ toggleValve(); done=true; break;} if(o.userData.qturn){ toggleQturn(o); done=true; break;} if(o.userData.isWheelValve){ toggleWheelValve(o); done=true; break;} if(o.userData.isRoundValve){ toggleRoundValve(o); done=true; break;} o=o.parent; } if(done){ handled=true; break; } }
@@ -1326,8 +1425,8 @@ const ray=new T.Raycaster(), mouse=new T.Vector2();
    ============================================================ */
 function refreshValveUI(){ pValve.textContent=sys.valveOpen?'OUVERTE':'FERMÉE'; pValve.className='pill '+(sys.valveOpen?'on':'off');
   valveWheel.userData.tgt=sys.valveOpen?Math.PI*1.5:0; }
-function charge(){ sys.purge=false; sys.supplied=true; sys.valveOpen=true; const v10=motoTestValves[1]; if(v10){ v10.userData.open=true; v10.userData.target=0; } refreshValveUI(); toast('Vanne ouverte — l\u2019eau arrive de la cuve'); }
-function purge(){ sys.purge=true; sys.supplied=false; sys.valveOpen=false; for(const v of motoTestValves){ v.userData.open=false; v.userData.target=Math.PI*3; } refreshValveUI(); toast('Purge / vidange générale du réseau'); }
+function charge(){ sys.purge=false; sys.supplied=true; sys.valveOpen=true; sys.jockeyOn=true; const v10=motoTestValves[1]; if(v10){ v10.userData.open=true; v10.userData.target=0; } refreshValveUI(); toast('Vanne ouverte — l\u2019eau arrive de la cuve'); }
+function purge(){ sys.purge=true; sys.supplied=false; sys.valveOpen=false; sys.jockeyOn=false; for(const v of motoTestValves){ v.userData.open=false; v.userData.target=Math.PI*3; } refreshValveUI(); toast('Purge / vidange générale du réseau'); }
 function toggleValve(){ sys.valveOpen=!sys.valveOpen; refreshValveUI();
   toast(sys.valveOpen?'Vanne d\u2019arrêt ouverte':'Vanne d\u2019arrêt fermée — eau maintenue sous le clapet'); }
 function toggleQturn(grp){ const u=grp.userData; u.open=!u.open; u.target=u.open?u.openRot:u.closedRot;
@@ -1345,13 +1444,17 @@ function toggleWheelValve(grp){ const u=grp.userData; u.open=!u.open; u.target=u
   toast((u.role==='byAmont'?'Vanne amont du by-pass ':'Vanne aval du by-pass ')+(u.open?'ouverte':'fermée')); }
 document.getElementById('btnCharge').onclick=charge;
 document.getElementById('btnPurge').onclick=purge;
+function fillSourceB(){                                    // remplir la cuve via la Source B
+  if(sys.tankLevel>=0.999){ toast('Cuve déjà pleine'); return; }
+  sys.fillB=true; toast('Remplissage de la cuve par la Source B…');
+}
+document.getElementById('btnFillB').onclick=fillSourceB;
+addEventListener('keydown',e=>{ if((e.key==='b'||e.key==='B') && !/input|textarea|select/i.test((e.target&&e.target.tagName)||'')) fillSourceB(); });
 const btnMoto=document.getElementById('btnMoto');
-const btnMotoStop=document.getElementById('btnMotoStop');
 function syncMotoUI(){
   btnMoto.textContent = sys.moto ? 'Arrêter la motopompe' : 'Démarrer la motopompe';
   btnMoto.classList.toggle('warn', sys.moto);
   btnMoto.classList.toggle('primary', !sys.moto);
-  btnMotoStop.style.display = sys.moto ? '' : 'none';   // le bouton d'arrêt n'apparaît que si la pompe tourne
 }
 function stopMoto(){
   sys.moto=false; syncMotoUI();
@@ -1360,7 +1463,6 @@ function stopMoto(){
     ? 'Motopompe arrêtée · les têtes ouvertes continuent de couler — fermez le poste puis vidangez'
     : 'Motopompe arrêtée');
 }
-btnMotoStop.onclick=stopMoto;
 btnMoto.onclick=()=>{
   if(sys.moto){ stopMoto(); return; }
   sys.moto=true;
@@ -1453,7 +1555,7 @@ function loop(now){ const dt=Math.max(0,Math.min(0.05,(now-last)/1000)); last=no
   // --- animation de la cuve : surface, agitation (test motopompe / vidange), arrivée Source B ---
   if(tankSurface){
     const drawing = sprayFlowing || motoHeadDefs.some(d=>d.flowing);
-    const srcBActive = sys.tankLevel <= tankLevelB+0.006 && (drawing || sys.tankLevel < tankLevelB-0.004); // Source B débite une fois le 2e cran atteint
+    const srcBActive = sys.fillB || (sys.tankLevel <= tankLevelB+0.006 && (drawing || sys.tankLevel < tankLevelB-0.004)); // Source B débite (remplissage manuel, ou entretien au 2e cran)
     const agit = sys.moto || drawing || srcBActive;                    // agitation de surface
     const yb = TANK_YB + TANK_H*sys.tankLevel;
     tankSurface.position.y = yb + (agit ? Math.sin(t*6)*0.035 : 0);
@@ -1469,7 +1571,21 @@ function loop(now){ const dt=Math.max(0,Math.min(0.05,(now-last)/1000)); last=no
     }
   }
   updateLabels();
+  fadePosteColumns();
+  updateArmoireLamps();
+  updateSmoke(dt);
   renderer.render(scene,camera); requestAnimationFrame(loop); }
+const POSTE_PT=V(POST.x,2.7,POST.z);
+function fadePosteColumns(){                         // estompe les poteaux devant le poste quand la caméra s'en approche
+  if(!posteFadeMat) return;
+  const d=camera.position.distanceTo(POSTE_PT);
+  const NEAR=7, FAR=15;                              // <7 : invisibles · >15 : pleins
+  let op=(d-NEAR)/(FAR-NEAR); op=Math.max(0,Math.min(1,op));
+  posteFadeMat.opacity=op;
+  posteFadeMat.depthWrite=(op>0.98);
+  const vis=(op>0.02);
+  for(const m of posteHiders) if(m.visible!==vis) m.visible=vis;
+}
 requestAnimationFrame(loop);
 addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
 /* --- Plein écran --- */
